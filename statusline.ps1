@@ -227,7 +227,28 @@ function Get-ModelSegment {
 function Get-ContextBarSegment {
     param($s)
     if ($null -eq $s -or $null -eq $s.context_window) { return $null }
-    $pct = $s.context_window.used_percentage
+    $ctx = $s.context_window
+    # Use the "displayed" percentage (current_context_used_percentage) that matches
+    # the value Copilot CLI shows next to the model. Fall back to computing it from
+    # current_context_tokens / displayed_context_limit, and only as a last resort to
+    # used_percentage (which is expressed against the full model window and stays low).
+    $pct = $null
+    foreach ($n in @('current_context_used_percentage','currentContextUsedPercentage')) {
+        if ($null -ne $ctx.PSObject.Properties[$n]) { $pct = $ctx.PSObject.Properties[$n].Value; if ($null -ne $pct) { break } }
+    }
+    if ($null -eq $pct) {
+        $used = $null; $size = $null
+        foreach ($n in @('current_context_tokens','currentContextTokens')) {
+            if ($null -ne $ctx.PSObject.Properties[$n]) { $used = $ctx.PSObject.Properties[$n].Value; if ($null -ne $used) { break } }
+        }
+        foreach ($n in @('displayed_context_limit','displayedContextLimit')) {
+            if ($null -ne $ctx.PSObject.Properties[$n]) { $size = $ctx.PSObject.Properties[$n].Value; if ($null -ne $size) { break } }
+        }
+        if ($null -ne $used -and $null -ne $size -and (0.0 + $size) -gt 0) {
+            $pct = (0.0 + $used) / (0.0 + $size) * 100.0
+        }
+    }
+    if ($null -eq $pct) { $pct = $ctx.used_percentage }
     if ($null -eq $pct) { return $null }
     $pctNum = 0.0 + $pct
     $width = 10
