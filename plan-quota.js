@@ -48,12 +48,20 @@ function fetchQuota(token) {
         try {
           const j = JSON.parse(body);
           const snap = j && j.quota_snapshots && j.quota_snapshots.premium_interactions;
-          if (snap && typeof snap.entitlementRequests === 'number' && snap.entitlementRequests > 0) {
+          // Schema (09/26): entitlement / credits_used / unlimited / quota_reset_at.
+          // Fallback to legacy field names for older responses.
+          const total = snap && (
+            (typeof snap.entitlement === 'number' && snap.entitlement) ||
+            (typeof snap.entitlementRequests === 'number' && snap.entitlementRequests)
+          );
+          if (total > 0) {
+            const used = (typeof snap.credits_used === 'number' ? snap.credits_used
+                        : typeof snap.usedRequests === 'number' ? snap.usedRequests : 0);
             resolve({
-              total: snap.entitlementRequests,
-              used: snap.usedRequests || 0,
-              unlimited: !!snap.isUnlimitedEntitlement,
-              resetDate: snap.resetDate || null,
+              total: total,
+              used: used,
+              unlimited: !!(snap.unlimited || snap.isUnlimitedEntitlement),
+              resetDate: snap.quota_reset_at || snap.resetDate || null,
             });
           } else resolve(null);
         } catch { resolve(null); }
