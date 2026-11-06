@@ -4,8 +4,8 @@
 #  Port of https://github.com/stephenleo/cship (originally for Claude Code)
 #  to GitHub Copilot CLI. Renders a two-line statusline:
 #    line 1 - optional Starship prompt (if `starship` is on PATH)
-#    line 2 - custom segments: model, context bar, plan credits, session AIC,
-#             lines changed, git branch, cwd, session id, session duration.
+#    line 2 - custom segments: username, session id, session AIC, lines changed,
+#             duration, model, context bar, plan credits, and optional extras.
 #
 #  ┌─────────────────────────────────────────────────────────────────────────┐
 #  │  HOW TO CUSTOMIZE                                                       │
@@ -100,6 +100,7 @@ $gRobot  = ([string][char]0xD83E) + ([string][char]0xDD16) + ' '   # U+1F916 rob
 $gId     = ([string][char]0xD83C) + ([string][char]0xDD94) + ' '   # U+1F194 ID button
 $gCoin   = ([string][char]0xD83E) + ([string][char]0xDE99) + ' '   # U+1FA99 coin
 $gLaptop = ([string][char]0xD83D) + ([string][char]0xDCBB) + ' '   # U+1F4BB laptop
+$gUser   = ([string][char]0xD83D) + ([string][char]0xDC68) + ([string][char]0xD83C) + ([string][char]0xDFFB) + ([string][char]0x200D) + ([string][char]0xD83D) + ([string][char]0xDCBB) + ' '   # U+1F468 U+1F3FB ZWJ U+1F4BB technologist
 $gClock  = ([string][char]0x23F1) + ([string][char]0xFE0F) + ' '   # U+23F1 stopwatch
 
 $separator = "$dim $midDot $reset"
@@ -228,7 +229,7 @@ function Get-ContextBarSegment {
     param($s)
     if ($null -eq $s -or $null -eq $s.context_window) { return $null }
     $ctx = $s.context_window
-    # Use the "displayed" percentage (current_context_used_percentage) that matches
+    # Prefer the "displayed" percentage (current_context_used_percentage) that matches
     # the value Copilot CLI shows next to the model. Fall back to computing it from
     # current_context_tokens / displayed_context_limit, and only as a last resort to
     # used_percentage (which is expressed against the full model window and stays low).
@@ -326,9 +327,11 @@ function Get-CreditsSegment {
     $cachePath  = Join-Path $env:USERPROFILE '.copilot\plan-quota-cache.json'
     $helperPath = Join-Path $env:USERPROFILE '.copilot\plan-quota.js'
     $cacheFresh = $false
+    $cacheHasLogin = $false
     if (Test-Path $cachePath) {
         try {
             $cache = Get-Content -Raw $cachePath | ConvertFrom-Json
+            if (-not [string]::IsNullOrWhiteSpace($cache.login)) { $cacheHasLogin = $true }
             if ($null -ne $cache.total -and $cache.total -gt 0) {
                 $nowMs = [double](Get-Date -UFormat %s) * 1000.0
                 $ageMs = $nowMs - [double]$cache.ts
@@ -338,7 +341,8 @@ function Get-CreditsSegment {
             }
         } catch { }
     }
-    if (-not $cacheFresh -and (Test-Path $helperPath)) {
+    $hasIdentityToken = -not [string]::IsNullOrWhiteSpace($env:GH_TOKEN) -or -not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN) -or -not [string]::IsNullOrWhiteSpace($env:COPILOT_TOKEN) -or -not [string]::IsNullOrWhiteSpace($env:GITHUB_COPILOT_TOKEN)
+    if ((-not $cacheFresh -or (-not $cacheHasLogin -and $hasIdentityToken)) -and (Test-Path $helperPath)) {
         try {
             Start-Process -WindowStyle Hidden -FilePath 'node' -ArgumentList @($helperPath) -ErrorAction SilentlyContinue | Out-Null
         } catch { }
@@ -501,6 +505,39 @@ function Get-GitBranchSegment {
 # SESSION SEGMENT   ->  "🆔 3d3b390"
 #   First 7 hex chars of the Copilot CLI session_id (dashes stripped).
 # -----------------------------------------------------------------------------
+function Get-UsernameSegment {
+    param($s)
+    $username = $null
+    if ($null -ne $s -and -not [string]::IsNullOrWhiteSpace($s.username)) {
+        $username = "$($s.username)"
+    }
+    # /user switch updates this selection; read it on every render, not from quota cache.
+    if ([string]::IsNullOrWhiteSpace($username)) {
+        $configPath = Join-Path $env:USERPROFILE '.copilot\config.json'
+        try {
+            $config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if (-not [string]::IsNullOrWhiteSpace($config.lastLoggedInUser.login)) {
+                $username = "$($config.lastLoggedInUser.login)"
+            }
+        } catch { }
+    }
+    if ([string]::IsNullOrWhiteSpace($username)) {
+        $cachePath = Join-Path $env:USERPROFILE '.copilot\plan-quota-cache.json'
+        if (Test-Path $cachePath) {
+            try {
+                $cache = Get-Content -Raw $cachePath | ConvertFrom-Json
+                if (-not [string]::IsNullOrWhiteSpace($cache.login)) { $username = "$($cache.login)" }
+            } catch { }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($username)) {
+        if (-not [string]::IsNullOrWhiteSpace($env:GH_USERNAME)) { $username = $env:GH_USERNAME }
+        elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ACTOR)) { $username = $env:GITHUB_ACTOR }
+    }
+    if ([string]::IsNullOrWhiteSpace($username)) { return $null }
+    return "$gUser$cBase$username$reset"
+}
+
 function Get-SessionSegment {
     param($s)
     if ($null -eq $s) { return $null }
@@ -587,7 +624,7 @@ function Get-StarshipLine {
 # -----------------------------------------------------------------------------
 #  Layout (three lines, top one optional):
 #    line 0 (optional): starship prompt
-#    line A (upper)   : 🆔 · 💻 · +/- lines · ⏱️
+#    line A (upper)   : 👨🏻‍💻 username · 🆔 · 💻 · +/- lines · ⏱️
 #    [ blank spacer line ]
 #    line B (lower)   : 🤖 · 🧠 · 🪙
 #
@@ -600,8 +637,9 @@ function Get-StarshipLine {
 # Wrapped: if starship crashes or hangs its stdout, the whole line is dropped.
 $line0 = Invoke-Segment { Get-StarshipLine $status }
 
-# ---- Line A: session id · session AIC · lines changed · duration ----
+# ---- Line A: username · session id · session AIC · lines changed · duration ----
 $topSegments = @()
+$topSegments += (Invoke-Segment { Get-UsernameSegment       $status })   # 👨🏻‍💻 authenticated username
 $topSegments += (Invoke-Segment { Get-SessionSegment        $status })   # 🆔 session id
 $topSegments += (Invoke-Segment { Get-SessionCreditsSegment $status })   # 💻 session AIC used
 $topSegments += (Invoke-Segment { Get-LinesSegment          $status })   # +added -removed lines
