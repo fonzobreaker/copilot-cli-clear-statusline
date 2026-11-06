@@ -4,6 +4,7 @@ A compact, information-dense **custom status line for [GitHub Copilot CLI](https
 
 It reads the JSON payload that Copilot CLI pipes to your status line command on every refresh and renders two lines with:
 
+- 👨🏻‍💻 **GitHub username** — from the Copilot payload when available, otherwise from the active account in `~/.copilot/config.json` (`lastLoggedInUser.login`), re-read on every refresh so `/user switch` is reflected without waiting for the quota cache,
 - 🤖 the **model** currently in use,
 - 🧠 the **context window** fill percentage with a progress bar,
 - 🪙 **plan-wide AI credits** used vs total (with color-coded warning thresholds),
@@ -17,7 +18,7 @@ It reads the JSON payload that Copilot CLI pipes to your status line command on 
 ![License MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ```text
-🆔 3d3b390 · 💻 2369 AIC · +2211 -333 · ⏱️ 18:57:42
+👨🏻‍💻 username · 🆔 3d3b390 · 💻 2369 AIC · +2211 -333 · ⏱️ 18:57:42
 
 🤖 Opus 4.7 · 🧠 ██░░░░░░░░ 16% · 🪙 ████░░░░░░ 37% (2618/7000)
 ```
@@ -92,6 +93,7 @@ This status line is built around this one principle: **always render something**
 - 🪙 **Plan AI credits** — used vs total with color thresholds: gold → amber at 60% → brick red at 80%.
 - 💻 **Session AI credits** — AIC consumed by the current session, read from `ai_used`.
 - ➕➖ **Lines changed** — from `cost.total_lines_added` and `cost.total_lines_removed`.
+- 👨🏻‍💻 **GitHub username** — read in this order: Copilot payload `username`, active account `lastLoggedInUser.login` in `~/.copilot/config.json`, cached GitHub token login, then `GH_USERNAME` / `GITHUB_ACTOR`. If none is available, only this segment is hidden. The active account is read on every refresh, so `/user switch` does not wait for the quota cache. The coin segment still uses the account associated with the configured quota API token, which can differ from the selected Copilot account.
 - 🆔 **Session id** — short 7-char id.
 - ⏱️ **Session duration** — `HH:MM:SS` from `cost.total_duration_ms`.
 - Color palette with truecolor ANSI SGR escapes.
@@ -125,8 +127,9 @@ Files written at runtime (all safe to delete):
 Open `statusline.ps1` and jump to the **RENDER PIPELINE** section at the bottom. Two lists control the whole layout:
 
 ```powershell
-# ---- Line A: session id · session AIC · lines changed · duration ----
+# ---- Line A: username · session id · session AIC · lines changed · duration ----
 $topSegments = @()
+$topSegments += (Invoke-Segment { Get-UsernameSegment       $status })   # 👨🏻‍💻 authenticated username
 $topSegments += (Invoke-Segment { Get-SessionSegment        $status })   # 🆔 session id
 $topSegments += (Invoke-Segment { Get-SessionCreditsSegment $status })   # 💻 session AIC used
 $topSegments += (Invoke-Segment { Get-LinesSegment          $status })   # +added -removed lines
